@@ -209,20 +209,40 @@ export default async function handler(request) {
       });
 
       if (upRes.ok) {
-        const data = await upRes.text();
-        return new Response(data, {
-          status: 200,
-          headers: {
-            "Content-Type": "application/json; charset=utf-8",
-            ...corsHeaders,
-          },
-        });
+        const rawText = await upRes.text();
+        try {
+          const json = JSON.parse(rawText);
+          const wrapProxy = (u) => {
+            if (!u || typeof u !== "string") return u;
+            // 若原本已經帶有原作者的 /proxy，替換成你自己的東京 Vercel 代理
+            if (u.includes("/proxy?token=")) {
+              return u.replace(/https?:\/\/[^"'\s]+\/proxy\?token=[^&"'\s]+/, `${url.origin}/proxy?token=${SECRET_TOKEN}`);
+            }
+            // 若是直連的 FANZA / DMM 網址，強制包一層東京代理繞過海外 IP 封鎖
+            if (u.includes("dmm.co.jp")) {
+              return `${url.origin}/proxy?token=${SECRET_TOKEN}&url=${encodeURIComponent(u)}`;
+            }
+            return u;
+          };
+
+          if (json.trailer) json.trailer = wrapProxy(json.trailer);
+          if (json.qualities && typeof json.qualities === "object") {
+            for (const q of Object.keys(json.qualities)) {
+              json.qualities[q] = wrapProxy(json.qualities[q]);
+            }
+          }
+          json.proxy = true;
+
+          return new Response(JSON.stringify(json), {
+            status: 200,
+            headers: {
+              "Content-Type": "application/json; charset=utf-8",
+              ...corsHeaders,
+            },
+          });
+        } catch (e) {}
       }
 
-      if (upRes.status === 401 || upRes.status === 403) continue;
-      break;
-    } catch (e) {}
-  }
 
   // 備援：本地 JavTrailers 抓取
   const rawVideoUrl = await fetchFromJavTrailers(code);
